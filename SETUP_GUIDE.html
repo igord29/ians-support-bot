@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ian's Agent — Setup Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --border: #1e1e2e;
+    --accent: #6ee7b7;
+    --accent2: #818cf8;
+    --warn: #fb923c;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --done: #34d399;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    padding: 40px 24px 80px;
+  }
+
+  .hero {
+    text-align: center;
+    margin-bottom: 56px;
+    padding-top: 16px;
+  }
+
+  .hero .label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    font-weight: 800;
+    line-height: 1.05;
+    background: linear-gradient(135deg, #fff 0%, var(--accent) 60%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 12px;
+  }
+
+  .hero p {
+    color: var(--muted);
+    font-size: 15px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  .arch {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 2px;
+    max-width: 720px;
+    margin: 0 auto 60px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .arch-node {
+    background: var(--surface);
+    padding: 20px 16px;
+    text-align: center;
+    position: relative;
+  }
+
+  .arch-node .icon { font-size: 24px; margin-bottom: 8px; }
+  .arch-node .name { font-size: 13px; font-weight: 600; }
+  .arch-node .sub { font-size: 11px; color: var(--muted); font-family: 'IBM Plex Mono', monospace; margin-top: 4px; }
+
+  .arch-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--accent);
+    font-size: 18px;
+    padding: 0;
+  }
+
+  .steps {
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .step {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+  }
+
+  .step-header:hover { background: rgba(110,231,183,0.04); }
+
+  .step-num {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #0a0a0f;
+    flex-shrink: 0;
+  }
+
+  .step-title { font-size: 16px; font-weight: 600; flex: 1; }
+  .step-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid;
+  }
+  .badge-easy { color: var(--done); border-color: var(--done); background: rgba(52,211,153,0.08); }
+  .badge-med { color: var(--warn); border-color: var(--warn); background: rgba(251,146,60,0.08); }
+  .step-toggle { color: var(--muted); font-size: 18px; transition: transform 0.2s; }
+  .step.open .step-toggle { transform: rotate(180deg); }
+
+  .step-body {
+    display: none;
+    padding: 24px;
+  }
+  .step.open .step-body { display: block; }
+
+  .step-body p { color: var(--muted); font-size: 14px; line-height: 1.7; margin-bottom: 16px; }
+  .step-body p:last-child { margin-bottom: 0; }
+
+  .step-body ol { color: var(--muted); font-size: 14px; line-height: 1.9; padding-left: 20px; }
+  .step-body ol li { margin-bottom: 4px; }
+
+  code {
+    font-family: 'IBM Plex Mono', monospace;
+    background: rgba(110,231,183,0.1);
+    color: var(--accent);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+
+  .code-block {
+    background: #0d0d14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    line-height: 1.7;
+    margin: 16px 0;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .note {
+    background: rgba(129,140,248,0.08);
+    border: 1px solid rgba(129,140,248,0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--accent2);
+    margin: 12px 0;
+    line-height: 1.6;
+  }
+
+  .warn-box {
+    background: rgba(251,146,60,0.08);
+    border: 1px solid rgba(251,146,60,0.2);
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: var(--warn);
+    margin: 12px 0;
+    line-height: 1.6;
+  }
+
+  .convos {
+    max-width: 720px;
+    margin: 48px auto 0;
+  }
+  .convos h2 {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    color: var(--text);
+  }
+  .convo-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .convo-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .convo-card .you {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+  .convo-card .msg {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+    background: rgba(110,231,183,0.06);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    border-left: 2px solid var(--accent);
+  }
+  .convo-card .response {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.03);
+    border-left: 2px solid var(--accent2);
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="label">Personal Productivity Agent</div>
+  <h1>Your AI<br>Field Agent</h1>
+  <p>Telegram → Claude → Google Calendar, Tasks & Gmail. Setup takes about 30 minutes.</p>
+</div>
+
+<!-- Architecture -->
+<div class="arch">
+  <div class="arch-node">
+    <div class="icon">📱</div>
+    <div class="name">You</div>
+    <div class="sub">Telegram</div>
+  </div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-node">
+    <div class="icon">🤖</div>
+    <div class="name">Bot Server</div>
+    <div class="sub">Railway/Node</div>
+  </div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-node">
+    <div class="icon">🧠</div>
+    <div class="name">Claude</div>
+    <div class="sub">claude-opus</div>
+  </div>
+  <div class="arch-arrow">→</div>
+  <div class="arch-node">
+    <div class="icon">📋</div>
+    <div class="name">Google</div>
+    <div class="sub">Tasks · Cal · Gmail</div>
+  </div>
+</div>
+
+<!-- Steps -->
+<div class="steps">
+
+  <div class="step open">
+    <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+      <div class="step-num">1</div>
+      <div class="step-title">Create a Telegram Bot</div>
+      <span class="step-badge badge-easy">5 min</span>
+      <span class="step-toggle">▾</span>
+    </div>
+    <div class="step-body">
+      <ol>
+        <li>Open Telegram and search for <strong>@BotFather</strong></li>
+        <li>Send: <code>/newbot</code></li>
+        <li>Follow prompts — give it a name like "Ian's Agent" and a username like <code>ian_field_agent_bot</code></li>
+        <li>Copy the <strong>HTTP API token</strong> — save as <code>TELEGRAM_BOT_TOKEN</code></li>
+        <li>Search for <strong>@userinfobot</strong> and message it to get your personal user ID — save as <code>TELEGRAM_CHAT_ID</code> and <code>ALLOWED_TELEGRAM_USER_IDS</code></li>
+      </ol>
+      <div class="note">💡 The allowed user IDs list prevents anyone else from using your bot if they somehow find it.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+      <div class="step-num">2</div>
+      <div class="step-title">Set Up Google Service Account</div>
+      <span class="step-badge badge-med">15 min</span>
+      <span class="step-toggle">▾</span>
+    </div>
+    <div class="step-body">
+      <p>This gives the bot permission to write to your Calendar, Tasks, and Gmail.</p>
+      <ol>
+        <li>Go to <strong>console.cloud.google.com</strong> → New Project → name it "Ian Agent"</li>
+        <li>Enable these APIs: <strong>Google Calendar API</strong>, <strong>Tasks API</strong>, <strong>Gmail API</strong></li>
+        <li>Go to <strong>IAM &amp; Admin → Service Accounts</strong> → Create Service Account</li>
+        <li>Name it "ian-agent", click Create. Skip optional fields.</li>
+        <li>Click the service account → <strong>Keys</strong> tab → Add Key → JSON → Download</li>
+        <li>Copy <code>client_email</code> → <code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code></li>
+        <li>Copy <code>private_key</code> → <code>GOOGLE_SERVICE_ACCOUNT_KEY</code></li>
+      </ol>
+      <div class="warn-box">⚠️ For Gmail sending: Service accounts need "Domain-wide delegation" in Google Workspace Admin. If you're on personal Gmail, use OAuth2 instead — ask Claude to swap out gmail.js with nodemailer + OAuth2.</div>
+      <p>Share your calendar with the service account email (give it "Make changes" permission) in Google Calendar settings.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+      <div class="step-num">3</div>
+      <div class="step-title">Deploy to Railway</div>
+      <span class="step-badge badge-easy">10 min</span>
+      <span class="step-toggle">▾</span>
+    </div>
+    <div class="step-body">
+      <ol>
+        <li>Push the code to a GitHub repo</li>
+        <li>Go to <strong>railway.app</strong> → New Project → Deploy from GitHub</li>
+        <li>Select your repo</li>
+        <li>Go to <strong>Variables</strong> tab and add all keys from <code>.env.example</code></li>
+        <li>Railway auto-deploys and gives you a public URL like <code>https://your-app.up.railway.app</code></li>
+      </ol>
+      <div class="code-block">npm run setup-webhook
+# Pass your Railway URL as argument if needed:
+# WEBHOOK_URL=https://your-app.up.railway.app node scripts/setup-webhook.js</div>
+      <div class="note">💡 Railway free tier = $5/month credit which covers this easily. Alternatively use Render.com free tier (has cold starts — less ideal for a bot).</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+      <div class="step-num">4</div>
+      <div class="step-title">Set Your Reminder Schedule</div>
+      <span class="step-badge badge-easy">2 min</span>
+      <span class="step-toggle">▾</span>
+    </div>
+    <div class="step-body">
+      <p>The bot is pre-configured with this schedule (all times EST):</p>
+      <div class="code-block">☀️  8:00 AM  — Morning briefing (calendar + high priority tasks)
+⏰ 10:00 AM  — Pending items check-in (if any open tasks)
+⏰ 12:00 PM  — Midday check-in
+⏰  2:00 PM  — Afternoon nudge
+⏰  4:00 PM  — Pre-evening check
+📋  6:00 PM  — Evening digest (full list + ideas captured)</div>
+      <p>Edit the cron schedules in <code>src/index.js</code> to adjust timing.</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Example conversations -->
+<div class="convos">
+  <h2>Example Conversations</h2>
+  <div class="convo-grid">
+    <div class="convo-card">
+      <div class="you">you →</div>
+      <div class="msg">Remember to follow up with James at USTA about the grant application</div>
+      <div class="response">✅ Task added: "Follow up with James at USTA re: grant application"</div>
+    </div>
+    <div class="convo-card">
+      <div class="you">you →</div>
+      <div class="msg">Schedule a call with Kimberly Thursday at 2pm for 30 minutes to review the video pipeline</div>
+      <div class="response">📅 Created: "Call with Kimberly — Video Pipeline Review" Thu 2:00–2:30 PM</div>
+    </div>
+    <div class="convo-card">
+      <div class="you">you →</div>
+      <div class="msg">Draft an email to the Elate Moving client saying the chatbot is live and they should test it</div>
+      <div class="response">📝 Draft ready. Send to who? And what's their email?</div>
+    </div>
+    <div class="convo-card">
+      <div class="you">you →</div>
+      <div class="msg">What do I have going on today?</div>
+      <div class="response">📅 2pm: Call w/ Kimberly<br>📋 3 open tasks (1 overdue)</div>
+    </div>
+    <div class="convo-card">
+      <div class="you">you →</div>
+      <div class="msg">done</div>
+      <div class="response">✅ Marked complete: "Follow up with James at USTA re: grant application"</div>
+    </div>
+    <div class="convo-card">
+      <div class="you">you →</div>
+      <div class="msg">Idea — what if the D2L platform had a voice mode for commuters?</div>
+      <div class="response">💡 Saved to ideas: D2L voice mode for commuters (category: technical)</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // All steps start closed except first
+  document.querySelectorAll('.step').forEach((s, i) => {
+    if (i !== 0) s.classList.remove('open');
+  });
+</script>
+</body>
+</html>
