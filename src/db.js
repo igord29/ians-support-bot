@@ -35,6 +35,16 @@ sqlite.exec(`
     reviewed INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    chat_id TEXT,
+    message TEXT,
+    remind_at TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS email_drafts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -93,6 +103,24 @@ export const db = {
     return sqlite.prepare(`
       SELECT * FROM ideas WHERE user_id = ? AND reviewed = 0 ORDER BY timestamp DESC
     `).all(userId);
+  },
+
+  // Reminders
+  saveReminder({ user_id, chat_id, message, remind_at }) {
+    const result = sqlite.prepare(`
+      INSERT INTO reminders (user_id, chat_id, message, remind_at) VALUES (?, ?, ?, ?)
+    `).run(user_id, chat_id, message, remind_at);
+    return result.lastInsertRowid;
+  },
+
+  getDueReminders() {
+    return sqlite.prepare(`
+      SELECT * FROM reminders WHERE status = 'pending' AND remind_at <= datetime('now')
+    `).all();
+  },
+
+  markReminderSent(id) {
+    sqlite.prepare(`UPDATE reminders SET status = 'sent' WHERE id = ?`).run(id);
   },
 
   // Email drafts

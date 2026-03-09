@@ -2,6 +2,8 @@ import "dotenv/config";
 import express from "express";
 import { handleTelegramUpdate } from "./bot.js";
 import { runDailyDigest, runMorningBriefing } from "./scheduler.js";
+import { db } from "./db.js";
+import { sendMessage } from "./telegram.js";
 import cron from "node-cron";
 
 const app = express();
@@ -46,6 +48,20 @@ cron.schedule("0 8 * * *", () => {
 cron.schedule("0 10,12,14,16 * * *", () => {
   console.log("Checking pending items...");
   runDailyDigest({ pendingOnly: true });
+});
+
+// Check for due reminders every minute
+cron.schedule("* * * * *", async () => {
+  try {
+    const due = db.getDueReminders();
+    for (const reminder of due) {
+      await sendMessage(reminder.chat_id, `⏰ Reminder: ${reminder.message}`);
+      db.markReminderSent(reminder.id);
+      console.log(`Reminder sent: "${reminder.message}"`);
+    }
+  } catch (err) {
+    console.error("Reminder check error:", err.message);
+  }
 });
 
 const PORT = process.env.PORT || 3000;

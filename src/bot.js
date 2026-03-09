@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { sendMessage, sendMarkdown } from "./telegram.js";
+import { sendMessage, sendMarkdown, transcribeVoice } from "./telegram.js";
 import { db } from "./db.js";
 import { createCalendarEvent, listTodayEvents } from "./google-calendar.js";
 import { draftEmail, sendEmail } from "./gmail.js";
@@ -146,10 +146,22 @@ const TOOLS = [
       },
       required: ["idea"]
     }
+  },
+  {
+    name: "set_reminder",
+    description: "Set a timed reminder that will notify Ian at the specified time. Use America/New_York timezone.",
+    input_schema: {
+      type: "object",
+      properties: {
+        message: { type: "string", description: "The reminder message to send" },
+        remind_at: { type: "string", description: "ISO 8601 datetime for when to send the reminder, in America/New_York timezone. Example: 2026-03-08T22:00:00-05:00" }
+      },
+      required: ["message", "remind_at"]
+    }
   }
 ];
 
-async function executeTool(toolName, toolInput, userId) {
+async function executeTool(toolName, toolInput, userId, chatId) {
   console.log(`Executing tool: ${toolName}`, toolInput);
 
   switch (toolName) {
@@ -189,6 +201,16 @@ async function executeTool(toolName, toolInput, userId) {
       await db.saveIdea({ ...toolInput, user_id: userId, timestamp: new Date().toISOString() });
       return { success: true };
     }
+    case "set_reminder": {
+      const remindAt = new Date(toolInput.remind_at).toISOString();
+      const id = db.saveReminder({
+        user_id: userId,
+        chat_id: chatId.toString(),
+        message: toolInput.message,
+        remind_at: remindAt
+      });
+      return { success: true, reminder_id: id, remind_at: remindAt };
+    }
     default:
       return { error: "Unknown tool" };
   }
@@ -196,11 +218,27 @@ async function executeTool(toolName, toolInput, userId) {
 
 export async function handleTelegramUpdate(update) {
   const msg = update.message || update.edited_message;
-  if (!msg || !msg.text) return;
+  if (!msg) return;
 
   const userId = msg.from.id.toString();
-  const text = msg.text;
   const chatId = msg.chat.id;
+  let text = msg.text;
+
+  // Handle voice messages — transcribe to text
+  if (!text && msg.voice) {
+    await sendMessage(chatId, null, "typing");
+    try {
+      text = await transcribeVoice(msg.voice.file_id);
+      console.log("Voice transcribed:", text);
+      await sendMessage(chatId, `🎤 _"${text}"_`);
+    } catch (err) {
+      console.error("Transcription error:", err);
+      await sendMessage(chatId, `Voice transcription failed: ${err.message}\nTry again or type it out.`);
+      return;
+    }
+  }
+
+  if (!text) return;
 
   // Don't process messages from unknown users
   const allowedUsers = process.env.ALLOWED_TELEGRAM_USER_IDS?.split(",") || [];
@@ -271,7 +309,7 @@ export async function handleTelegramUpdate(update) {
     const toolResults = [];
 
     for (const toolUse of toolUseBlocks) {
-      const result = await executeTool(toolUse.name, toolUse.input, userId);
+      const result = await executeTool(toolUse.name, toolUse.input, userId, chatId);
       toolResults.push({
         type: "tool_result",
         tool_use_id: toolUse.id,
