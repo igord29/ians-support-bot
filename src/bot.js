@@ -7,6 +7,44 @@ import { addGoogleTask, listPendingTasks, completeTask } from "./google-tasks.js
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+const API_TIMEOUT_MS = 30_000; // 30 seconds — if Claude hasn't responded, abort
+const MAX_RETRIES = 2;
+
+async function callClaude(messages, { retries = MAX_RETRIES } = {}) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await anthropic.messages.create(
+        {
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1024,
+          system: SYSTEM_PROMPT,
+          tools: TOOLS,
+          messages
+        },
+        { signal: AbortSignal.timeout(API_TIMEOUT_MS) }
+      );
+      return response;
+    } catch (err) {
+      const isLastAttempt = attempt === retries;
+      const isRetryable =
+        err.name === "TimeoutError" ||
+        err.name === "AbortError" ||
+        err.status === 529 || // Anthropic overloaded
+        err.status === 503 ||
+        err.status === 500 ||
+        err.error?.type === "overloaded_error";
+
+      if (isRetryable && !isLastAttempt) {
+        const delay = Math.min(1000 * 2 ** attempt, 8000); // 1s, 2s, 4s, max 8s
+        console.warn(`Claude API attempt ${attempt + 1} failed (${err.name || err.status}), retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err; // Non-retryable or exhausted retries
+    }
+  }
+}
+
 // In-memory conversation history per user (TTL: 2 hours)
 const conversationCache = new Map();
 
@@ -279,54 +317,78 @@ export async function handleTelegramUpdate(update) {
   // Send typing indicator
   await sendMessage(chatId, null, "typing");
 
-  // Agentic loop - allow up to 5 tool calls
+  // Agentic loop with overall timeout — never let a single message hang the bot
+  const LOOP_TIMEOUT_MS = 120_000; // 2 minutes max for entire request
   let messages = history.map(h => ({ role: h.role, content: h.content }));
   let finalResponse = "";
   let iterations = 0;
 
-  while (iterations < 5) {
-    iterations++;
+  const loopTimeout = setTimeout(() => {}, LOOP_TIMEOUT_MS); // reference for cleanup
+  const deadline = Date.now() + LOOP_TIMEOUT_MS;
 
-    const response = await anthropic.messages.create({
-      model: "claude-opus-4-5",
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      tools: TOOLS,
-      messages
-    });
+  try {
+    while (iterations < 5) {
+      if (Date.now() > deadline) {
+        console.warn(`Agentic loop timed out for user ${userId} after ${iterations} iterations`);
+        finalResponse = finalResponse || "Sorry, that took too long. Try again or simplify your request.";
+        break;
+      }
 
-    // Collect any text
-    const textBlocks = response.content.filter(b => b.type === "text");
-    if (textBlocks.length > 0) {
-      finalResponse = textBlocks.map(b => b.text).join("\n");
+      iterations++;
+
+      const response = await callClaude(messages);
+
+      // Collect any text
+      const textBlocks = response.content.filter(b => b.type === "text");
+      if (textBlocks.length > 0) {
+        finalResponse = textBlocks.map(b => b.text).join("\n");
+      }
+
+      // If no tool use, we're done
+      if (response.stop_reason !== "tool_use") break;
+
+      // Process tool calls
+      const toolUseBlocks = response.content.filter(b => b.type === "tool_use");
+      const toolResults = [];
+
+      for (const toolUse of toolUseBlocks) {
+        try {
+          const result = await executeTool(toolUse.name, toolUse.input, userId, chatId);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUse.id,
+            content: JSON.stringify(result)
+          });
+        } catch (toolErr) {
+          console.error(`Tool ${toolUse.name} failed:`, toolErr.message);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: toolUse.id,
+            content: JSON.stringify({ error: toolErr.message }),
+            is_error: true
+          });
+        }
+      }
+
+      // Add assistant response + tool results to messages
+      messages = [
+        ...messages,
+        { role: "assistant", content: response.content },
+        { role: "user", content: toolResults }
+      ];
     }
-
-    // If no tool use, we're done
-    if (response.stop_reason !== "tool_use") break;
-
-    // Process tool calls
-    const toolUseBlocks = response.content.filter(b => b.type === "tool_use");
-    const toolResults = [];
-
-    for (const toolUse of toolUseBlocks) {
-      const result = await executeTool(toolUse.name, toolUse.input, userId, chatId);
-      toolResults.push({
-        type: "tool_result",
-        tool_use_id: toolUse.id,
-        content: JSON.stringify(result)
-      });
-    }
-
-    // Add assistant response + tool results to messages
-    messages = [
-      ...messages,
-      { role: "assistant", content: response.content },
-      { role: "user", content: toolResults }
-    ];
+  } catch (err) {
+    console.error(`Agentic loop error for user ${userId}:`, err.message);
+    finalResponse = "Something went wrong on my end. Try again in a moment.";
+  } finally {
+    clearTimeout(loopTimeout);
   }
 
   if (finalResponse) {
     await sendMarkdown(chatId, finalResponse);
     addToHistory(userId, "assistant", finalResponse);
+  } else {
+    await sendMessage(chatId, "Done.");
+    addToHistory(userId, "assistant", "Done.");
   }
 }

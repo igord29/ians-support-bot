@@ -7,6 +7,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "prod": "pm2 start ecosystem.config.cjs",
+    "prod:stop": "pm2 stop ian-agent",
+    "prod:logs": "pm2 logs ian-agent",
+    "prod:status": "pm2 status",
     "setup-webhook": "node scripts/setup-webhook.js"
   },
   "dependencies": {

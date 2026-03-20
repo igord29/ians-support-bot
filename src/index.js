@@ -3,8 +3,17 @@ import express from "express";
 import { handleTelegramUpdate } from "./bot.js";
 import { runDailyDigest, runMorningBriefing } from "./scheduler.js";
 import { db } from "./db.js";
-import { sendMessage } from "./telegram.js";
+import { sendMessage, setWebhook } from "./telegram.js";
 import cron from "node-cron";
+
+// --- Process-level crash protection ---
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT EXCEPTION — process staying alive:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("UNHANDLED REJECTION — process staying alive:", reason);
+});
 
 const app = express();
 app.use(express.json());
@@ -19,7 +28,7 @@ app.post("/webhook", async (req, res) => {
   } catch (err) {
     console.error("Webhook error:", err.status || err.code, err.message);
     // Notify Ian on Telegram about the error
-    const chatId = req.body?.message?.chat?.id;
+    const chatId = req.body?.message?.chat?.id || req.body?.edited_message?.chat?.id;
     if (chatId) {
       fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: "POST",
@@ -32,23 +41,17 @@ app.post("/webhook", async (req, res) => {
 
 app.get("/health", (_, res) => res.json({ status: "ok" }));
 
-// Daily digest at 6:00 PM
-cron.schedule("0 18 * * *", () => {
-  console.log("Running evening digest...");
-  runDailyDigest();
-});
+// Safe cron wrapper — prevents unhandled rejections from killing the process
+function safeCron(schedule, name, fn) {
+  cron.schedule(schedule, () => {
+    console.log(`[cron] ${name} starting...`);
+    fn().catch(err => console.error(`[cron] ${name} failed:`, err));
+  });
+}
 
-// Morning briefing at 8:00 AM
-cron.schedule("0 8 * * *", () => {
-  console.log("Running morning briefing...");
-  runMorningBriefing();
-});
-
-// Pending item follow-up check every 2 hours during day
-cron.schedule("0 10,12,14,16 * * *", () => {
-  console.log("Checking pending items...");
-  runDailyDigest({ pendingOnly: true });
-});
+safeCron("0 18 * * *", "evening-digest", () => runDailyDigest());
+safeCron("0 8 * * *", "morning-briefing", () => runMorningBriefing());
+safeCron("0 10,12,14,16 * * *", "pending-check", () => runDailyDigest({ pendingOnly: true }));
 
 // Check for due reminders every minute
 cron.schedule("* * * * *", async () => {
@@ -65,4 +68,20 @@ cron.schedule("* * * * *", async () => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Ian's agent running on port ${PORT}`));
+app.listen(PORT, async () => {
+  console.log(`Ian's agent running on port ${PORT}`);
+
+  // Re-register webhook on every startup — ensures Telegram delivers updates
+  // even after a crash/restart where Telegram may have backed off
+  const webhookUrl = process.env.WEBHOOK_URL;
+  if (webhookUrl) {
+    try {
+      await setWebhook(`${webhookUrl}/webhook`);
+      console.log(`Webhook registered: ${webhookUrl}/webhook`);
+    } catch (err) {
+      console.error("Failed to register webhook:", err.message);
+    }
+  } else {
+    console.warn("No WEBHOOK_URL set — webhook not auto-registered");
+  }
+});

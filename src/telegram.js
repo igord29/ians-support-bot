@@ -6,7 +6,13 @@ async function call(method, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
-  return res.json();
+  const data = await res.json();
+  if (!data.ok) {
+    const err = new Error(`Telegram ${method} failed: ${data.description}`);
+    err.telegramError = data;
+    throw err;
+  }
+  return data;
 }
 
 export async function sendMessage(chatId, text, action) {
@@ -14,20 +20,37 @@ export async function sendMessage(chatId, text, action) {
     return call("sendChatAction", { chat_id: chatId, action: "typing" });
   }
   if (!text) return;
-  return call("sendMessage", {
-    chat_id: chatId,
-    text,
-    parse_mode: "Markdown"
-  });
+  // Try with Markdown first, fall back to plain text if parsing fails
+  try {
+    return await call("sendMessage", {
+      chat_id: chatId,
+      text,
+      parse_mode: "Markdown"
+    });
+  } catch (err) {
+    if (err.telegramError?.description?.includes("can't parse entities")) {
+      console.warn("Markdown parse failed, sending as plain text");
+      return call("sendMessage", { chat_id: chatId, text });
+    }
+    throw err;
+  }
 }
 
 export async function sendMarkdown(chatId, text) {
-  // Escape problematic markdown chars for Telegram's parser
-  return call("sendMessage", {
-    chat_id: chatId,
-    text,
-    parse_mode: "Markdown"
-  });
+  // Try Markdown, fall back to plain text if Telegram rejects formatting
+  try {
+    return await call("sendMessage", {
+      chat_id: chatId,
+      text,
+      parse_mode: "Markdown"
+    });
+  } catch (err) {
+    if (err.telegramError?.description?.includes("can't parse entities")) {
+      console.warn("Markdown parse failed in sendMarkdown, sending as plain text");
+      return call("sendMessage", { chat_id: chatId, text });
+    }
+    throw err;
+  }
 }
 
 export async function setWebhook(url) {
