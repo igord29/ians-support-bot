@@ -1,6 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { sendMessage, sendMarkdown, transcribeVoice } from "./telegram.js";
 import { db } from "./db.js";
+import { MODEL } from "./config.js";
+import { runDiagnostics, formatResults } from "./diagnostics.js";
 import { createCalendarEvent, listTodayEvents } from "./google-calendar.js";
 import { draftEmail, sendEmail } from "./gmail.js";
 import { addGoogleTask, listPendingTasks, completeTask } from "./google-tasks.js";
@@ -15,7 +17,7 @@ async function callClaude(messages, { retries = MAX_RETRIES } = {}) {
     try {
       const response = await anthropic.messages.create(
         {
-          model: "claude-sonnet-4-20250514",
+          model: MODEL,
           max_tokens: 1024,
           system: SYSTEM_PROMPT,
           tools: TOOLS,
@@ -45,23 +47,14 @@ async function callClaude(messages, { retries = MAX_RETRIES } = {}) {
   }
 }
 
-// In-memory conversation history per user (TTL: 2 hours)
-const conversationCache = new Map();
-
+// Conversation history is persisted in SQLite (survives restarts/crashes).
+// We keep the last 20 turns within a 2-hour TTL window for context.
 function getHistory(userId) {
-  const entry = conversationCache.get(userId);
-  if (!entry) return [];
-  if (Date.now() - entry.ts > 2 * 60 * 60 * 1000) {
-    conversationCache.delete(userId);
-    return [];
-  }
-  return entry.messages;
+  return db.getRecentConversation(userId, { limitTurns: 20, ttlHours: 2 });
 }
 
 function addToHistory(userId, role, content) {
-  const existing = getHistory(userId);
-  const updated = [...existing, { role, content }].slice(-20); // keep last 20 turns
-  conversationCache.set(userId, { messages: updated, ts: Date.now() });
+  db.addConversationTurn(userId, role, content);
 }
 
 const SYSTEM_PROMPT = `You are Ian's personal productivity agent. Ian is a solo developer, nonprofit founder, and marketing professional based in Westchester County / Long Island, NY. He runs Community Literacy Club (youth tennis & chess) and builds AI-powered applications. He's always on the move and sends you ideas, tasks, and thoughts throughout the day.
@@ -282,6 +275,19 @@ export async function handleTelegramUpdate(update) {
   const allowedUsers = process.env.ALLOWED_TELEGRAM_USER_IDS?.split(",") || [];
   if (allowedUsers.length > 0 && !allowedUsers.includes(userId)) {
     await sendMessage(chatId, "Sorry, I don't recognize you.");
+    return;
+  }
+
+  // Self-diagnostics command — reports config/health from inside Telegram.
+  // Restricted to authorized users (it reveals which env vars are set).
+  if (/^\/(diag|health)\b/.test(text.trim())) {
+    await sendMessage(chatId, null, "typing");
+    try {
+      const results = await runDiagnostics();
+      await sendMarkdown(chatId, formatResults(results));
+    } catch (err) {
+      await sendMessage(chatId, `Diagnostics failed to run: ${err.message}`);
+    }
     return;
   }
 

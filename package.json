@@ -11,7 +11,8 @@
     "prod:stop": "pm2 stop ian-agent",
     "prod:logs": "pm2 logs ian-agent",
     "prod:status": "pm2 status",
-    "setup-webhook": "node scripts/setup-webhook.js"
+    "setup-webhook": "node scripts/setup-webhook.js",
+    "diagnose": "node scripts/diagnose.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

@@ -55,6 +55,17 @@ sqlite.exec(`
     status TEXT DEFAULT 'pending',
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS conversation_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    role TEXT,
+    content TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_conv_user_time
+    ON conversation_history (user_id, created_at);
 `);
 
 export const db = {
@@ -143,5 +154,22 @@ export const db = {
     sqlite.prepare(`
       UPDATE email_drafts SET status = 'sent' WHERE user_id = ? AND status = 'pending'
     `).run(userId);
+  },
+
+  // Conversation history — persisted so context survives restarts/crashes
+  addConversationTurn(userId, role, content) {
+    sqlite.prepare(`
+      INSERT INTO conversation_history (user_id, role, content) VALUES (?, ?, ?)
+    `).run(userId, role, content);
+  },
+
+  // Returns the last `limitTurns` turns within the TTL window, oldest first
+  getRecentConversation(userId, { limitTurns = 20, ttlHours = 2 } = {}) {
+    const rows = sqlite.prepare(`
+      SELECT role, content FROM conversation_history
+      WHERE user_id = ? AND created_at >= datetime('now', ?)
+      ORDER BY id DESC LIMIT ?
+    `).all(userId, `-${ttlHours} hours`, limitTurns);
+    return rows.reverse();
   }
 };
