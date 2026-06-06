@@ -13,6 +13,14 @@ async function tg(method) {
   return res.json();
 }
 
+function humanAge(ms) {
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
 // Returns an array of { status: "ok"|"warn"|"fail", name, message }.
 export async function runDiagnostics() {
   const r = [];
@@ -55,8 +63,19 @@ export async function runDiagnostics() {
         if (!w.url) fail("Webhook", "no URL registered — Telegram has nowhere to deliver messages");
         else ok("Webhook", w.url);
         if (w.pending_update_count > 0) warn("Webhook backlog", `${w.pending_update_count} undelivered updates`);
-        if (w.last_error_message)
-          fail("Webhook delivery", `"${w.last_error_message}" (${new Date(w.last_error_date * 1000).toISOString()})`);
+        if (w.last_error_message) {
+          // getWebhookInfo reports the LAST error ever seen and never clears it
+          // on recovery. Treat a recent error (or any backlog) as active; an old
+          // error with no pending updates is almost certainly stale.
+          const ageMs = Date.now() - w.last_error_date * 1000;
+          const when = new Date(w.last_error_date * 1000).toISOString();
+          const detail = `"${w.last_error_message}" (${when}, ${humanAge(ageMs)} ago)`;
+          if (ageMs < 60 * 60 * 1000 || w.pending_update_count > 0) {
+            fail("Webhook delivery", `${detail} — appears active`);
+          } else {
+            warn("Webhook delivery", `last error ${detail}; likely stale — Telegram shows it until the next failure, and delivery has since recovered`);
+          }
+        }
       } else {
         fail("Webhook", info.description);
       }
