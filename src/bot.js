@@ -57,7 +57,7 @@ function addToHistory(userId, role, content) {
   db.addConversationTurn(userId, role, content);
 }
 
-const SYSTEM_PROMPT = `You are Ian's personal productivity agent. Ian is a solo developer, nonprofit founder, and marketing professional based in Westchester County / Long Island, NY. He runs Community Literacy Club (youth tennis & chess) and builds AI-powered applications. He's always on the move and sends you ideas, tasks, and thoughts throughout the day.
+const DEFAULT_SYSTEM_PROMPT = `You are Ian's personal productivity agent. Ian is a solo developer, nonprofit founder, and marketing professional based in Westchester County / Long Island, NY. He runs Community Literacy Club (youth tennis & chess) and builds AI-powered applications. He's always on the move and sends you ideas, tasks, and thoughts throughout the day.
 
 Your job:
 1. Capture ideas and tasks from natural language — Ian should never have to format things
@@ -81,6 +81,10 @@ When Ian says things like:
 Always confirm destructive or send actions. For task creation, just do it and confirm after.
 
 Respond in plain text. Use markdown only for lists. Keep responses under 150 words unless Ian asks for detail.`;
+
+// Per-deployment override. Set AGENT_SYSTEM_PROMPT to run a bot for someone
+// else (e.g. a partner) without touching code. Falls back to the default above.
+const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
 
 const TOOLS = [
   {

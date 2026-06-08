@@ -1,5 +1,6 @@
 import { sendMarkdown } from "./telegram.js";
 import { db } from "./db.js";
+import { OWNER_NAME } from "./config.js";
 import { listPendingTasks } from "./google-tasks.js";
 import { listTodayEvents } from "./google-calendar.js";
 
@@ -64,7 +65,7 @@ export async function runMorningBriefing() {
       listPendingTasks("all")
     ]);
 
-    const lines = ["☀️ *Good morning, Ian! Here's your day:*\n"];
+    const lines = [`☀️ *Good morning, ${OWNER_NAME}! Here's your day:*\n`];
 
     if (events.length > 0) {
       lines.push("*📅 Today's Calendar:*");
