@@ -16,7 +16,11 @@ const oauth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_U
 
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: "offline",
-  scope: ["https://www.googleapis.com/auth/gmail.send"],
+  // send: outbound email tool; readonly: the USTA inbox watcher
+  scope: [
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.readonly"
+  ],
   prompt: "consent",
 });
 

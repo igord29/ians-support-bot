@@ -58,6 +58,34 @@ For search: free API key at brave.com/search/api → `BRAVE_API_KEY`.
 
 Try: *"check what the live unitedsets homepage says about the next tournament"*.
 
+## 5. USTA tournament watcher
+
+Notifies you on Telegram when USTA emails you about a tournament (e.g. published
+/ sanctioned), and lets you reply "add it to the site" to create it on
+unitedsets.com through the normal approval flow.
+
+Why email? playtennis.usta.com (including the public pages) sits behind
+Cloudflare bot protection — servers can't poll it. USTA's organizer emails are
+the reliable signal.
+
+1. Re-run the Gmail auth to add read permission (the scope list now includes
+   gmail.readonly): locally run `node scripts/gmail-auth.js`, sign in, and
+   replace `GMAIL_REFRESH_TOKEN` on Railway with the new token.
+2. Set `USTA_WATCH=on`.
+3. Optional: `USTA_EMAIL_QUERY` to tune which emails match
+   (default: `from:(usta.com OR playtennis.usta.com OR clubspark.com) newer_than:3d`).
+
+The bot checks every 15 minutes; each email is announced once.
+
+```
+Bot:  📬 USTA update — "Your tournament is now published: 5D Summer Open" ...
+      Reply "add it to the site" to create this on unitedsets.com, or ignore.
+You:  add it to the site
+Bot:  ⏳ Proposed — Create tournament "5D Summer Open" starting 2026-08-09 ...
+You:  yes
+Bot:  ✅ Done
+```
+
 ## How the approval flow works
 
 ```

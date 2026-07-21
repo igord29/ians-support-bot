@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { handleTelegramUpdate } from "./bot.js";
 import { runDailyDigest, runMorningBriefing } from "./scheduler.js";
+import { checkUstaEmails } from "./usta-watch.js";
 import { db } from "./db.js";
 import { sendMessage, setWebhook } from "./telegram.js";
 import cron from "node-cron";
@@ -52,6 +53,7 @@ function safeCron(schedule, name, fn) {
 safeCron("0 18 * * *", "evening-digest", () => runDailyDigest());
 safeCron("0 8 * * *", "morning-briefing", () => runMorningBriefing());
 safeCron("0 10,12,14,16 * * *", "pending-check", () => runDailyDigest({ pendingOnly: true }));
+safeCron("*/15 * * * *", "usta-watch", () => checkUstaEmails()); // no-op unless USTA_WATCH=on
 
 // Check for due reminders every minute
 cron.schedule("* * * * *", async () => {

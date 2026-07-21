@@ -67,6 +67,12 @@ sqlite.exec(`
   CREATE INDEX IF NOT EXISTS idx_conv_user_time
     ON conversation_history (user_id, created_at);
 
+  CREATE TABLE IF NOT EXISTS seen_emails (
+    id TEXT PRIMARY KEY,
+    subject TEXT,
+    seen_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -210,5 +216,14 @@ export const db = {
     sqlite.prepare(`
       UPDATE pending_actions SET status = ?, resolved_at = datetime('now') WHERE id = ?
     `).run(status, id);
+  },
+
+  // Seen emails — dedupe for the USTA inbox watcher
+  hasSeenEmail(id) {
+    return !!sqlite.prepare(`SELECT 1 FROM seen_emails WHERE id = ?`).get(id);
+  },
+
+  markEmailSeen(id, subject) {
+    sqlite.prepare(`INSERT OR IGNORE INTO seen_emails (id, subject) VALUES (?, ?)`).run(id, subject);
   }
 };
