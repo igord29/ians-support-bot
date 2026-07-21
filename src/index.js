@@ -53,7 +53,10 @@ function safeCron(schedule, name, fn) {
 safeCron("0 18 * * *", "evening-digest", () => runDailyDigest());
 safeCron("0 8 * * *", "morning-briefing", () => runMorningBriefing());
 safeCron("0 10,12,14,16 * * *", "pending-check", () => runDailyDigest({ pendingOnly: true }));
-safeCron("*/15 * * * *", "usta-watch", () => checkUstaEmails()); // no-op unless USTA_WATCH=on
+// Inbox check for USTA/page-change alert emails (NOT the USTA site itself —
+// that's Cloudflare-blocked; a page-monitor service emails us on change).
+// No-op unless USTA_WATCH=on. Schedule configurable, default every 15 min.
+safeCron(process.env.USTA_WATCH_CRON || "*/15 * * * *", "usta-watch", () => checkUstaEmails());
 
 // Check for due reminders every minute
 cron.schedule("* * * * *", async () => {

@@ -60,22 +60,37 @@ Try: *"check what the live unitedsets homepage says about the next tournament"*.
 
 ## 5. USTA tournament watcher
 
-Notifies you on Telegram when USTA emails you about a tournament (e.g. published
-/ sanctioned), and lets you reply "add it to the site" to create it on
-unitedsets.com through the normal approval flow.
+Notifies you on Telegram when the USTA tournaments page changes (or when USTA
+emails you directly), and lets you reply "add it to the site" to create the
+tournament on unitedsets.com through the normal approval flow.
 
-Why email? playtennis.usta.com (including the public pages) sits behind
-Cloudflare bot protection — servers can't poll it. USTA's organizer emails are
-the reliable signal.
+**How it works — and why.** playtennis.usta.com is behind Cloudflare bot
+protection, so the bot cannot poll the page itself (every server request gets
+a 403). And no website offers true "push on change" to outsiders — all change
+detection is someone polling. So we let a monitoring service do the watching
+with a real browser (which Cloudflare allows), have it email you on change,
+and the bot turns that email into a Telegram alert. The bot never hits the
+USTA site.
 
-1. Re-run the Gmail auth to add read permission (the scope list now includes
-   gmail.readonly): locally run `node scripts/gmail-auth.js`, sign in, and
-   replace `GMAIL_REFRESH_TOKEN` on Railway with the new token.
-2. Set `USTA_WATCH=on`.
-3. Optional: `USTA_EMAIL_QUERY` to tune which emails match
-   (default: `from:(usta.com OR playtennis.usta.com OR clubspark.com) newer_than:3d`).
+### Setup
 
-The bot checks every 15 minutes; each email is announced once.
+1. **Page monitor (free):** create a visualping.io account (or Distill.io)
+   → add the page `https://playtennis.usta.com/Competitions/5dmedia/Tournaments/`
+   → check frequency: daily is plenty (free tier) → alert email: the Gmail
+   the bot reads.
+2. **Gmail read permission:** locally run `node scripts/gmail-auth.js`
+   (scopes now include gmail.readonly), sign in, replace `GMAIL_REFRESH_TOKEN`
+   on Railway with the new token.
+3. Set `USTA_WATCH=on`.
+4. Optional:
+   - `USTA_EMAIL_QUERY` — tune which emails match (default matches USTA
+     domains + visualping/distill/changedetection senders, last 3 days).
+   - `USTA_WATCH_CRON` — how often the bot checks its own inbox for these
+     alerts (default every 15 min; e.g. `0 */2 * * *` for every 2 hours).
+     This is a cheap Gmail API call, not a hit on the USTA site.
+
+Each alert is announced once. USTA's own organizer emails (sanction/publish
+confirmations) are caught by the same watcher.
 
 ```
 Bot:  📬 USTA update — "Your tournament is now published: 5D Summer Open" ...

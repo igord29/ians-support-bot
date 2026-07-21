@@ -1,20 +1,27 @@
 // USTA tournament watcher.
 //
 // playtennis.usta.com sits behind Cloudflare bot protection, so servers cannot
-// poll the admin/public pages directly. Instead we watch Gmail for USTA
-// notification emails (tournament published/sanctioned/etc), notify Ian on
-// Telegram, and drop the email into conversation history so a reply like
-// "add it to the site" lets Claude create it via the approval-gated
-// create_tournament tool.
+// poll the admin/public pages directly. Two signals reach us by email instead:
+//   1. USTA's own organizer notification emails
+//   2. A page-change monitor (e.g. Visualping, free tier) watching
+//      https://playtennis.usta.com/Competitions/5dmedia/Tournaments/ — those
+//      services run real browsers, so Cloudflare lets them through, and they
+//      email when the page content changes.
+// This watcher checks Gmail for either, notifies Ian on Telegram, and drops
+// the email into conversation history so a reply like "add it to the site"
+// lets Claude create the tournament via the approval-gated create_tournament
+// tool. The bot itself never touches the USTA site.
 //
 // Enable with USTA_WATCH=on (requires the gmail.readonly scope — re-run
-// scripts/gmail-auth.js after updating scopes). Optional: USTA_EMAIL_QUERY.
+// scripts/gmail-auth.js after updating scopes). Optional: USTA_EMAIL_QUERY,
+// USTA_WATCH_CRON.
 
 import { listRecentEmails } from "./gmail.js";
 import { sendMarkdown } from "./telegram.js";
 import { db } from "./db.js";
 
-const DEFAULT_QUERY = "from:(usta.com OR playtennis.usta.com OR clubspark.com) newer_than:3d";
+const DEFAULT_QUERY =
+  "from:(usta.com OR playtennis.usta.com OR clubspark.com OR visualping.io OR distill.io OR changedetection.io) newer_than:3d";
 
 export async function checkUstaEmails() {
   if ((process.env.USTA_WATCH || "").toLowerCase() !== "on") return;
@@ -29,9 +36,10 @@ export async function checkUstaEmails() {
     if (db.hasSeenEmail(email.id)) continue;
     db.markEmailSeen(email.id, email.subject);
 
+    const isPageMonitor = /visualping|distill|changedetection/i.test(email.from);
     const preview = email.body.replace(/\s+/g, " ").slice(0, 400);
     const note = [
-      `📬 *USTA update*`,
+      isPageMonitor ? `👀 *USTA tournaments page changed*` : `📬 *USTA update*`,
       `*${email.subject}*`,
       `_${email.from}_`,
       "",
@@ -47,8 +55,10 @@ export async function checkUstaEmails() {
       db.addConversationTurn(
         ownerId,
         "assistant",
-        `USTA email received — subject: "${email.subject}". Body: ${email.body.slice(0, 1200)}. ` +
-        `If Ian asks to add this to the site, extract the tournament details and call create_tournament.`
+        `${isPageMonitor ? "USTA tournaments page-change alert" : "USTA email"} received — ` +
+        `subject: "${email.subject}". Body: ${email.body.slice(0, 1200)}. ` +
+        `If Ian asks to add this to the site, extract the tournament details (ask him for any that are missing, ` +
+        `like the start date) and call create_tournament.`
       );
     }
     console.log(`[usta-watch] notified: ${email.subject}`);
