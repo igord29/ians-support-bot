@@ -6,6 +6,10 @@ import { runDiagnostics, formatResults } from "./diagnostics.js";
 import { createCalendarEvent, listTodayEvents } from "./google-calendar.js";
 import { draftEmail, sendEmail } from "./gmail.js";
 import { addGoogleTask, listPendingTasks, completeTask } from "./google-tasks.js";
+import * as unitedsets from "./unitedsets.js";
+import * as github from "./github.js";
+import * as vercel from "./vercel.js";
+import * as web from "./web.js";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -18,7 +22,7 @@ async function callClaude(messages, { retries = MAX_RETRIES } = {}) {
       const response = await anthropic.messages.create(
         {
           model: MODEL,
-          max_tokens: 1024,
+          max_tokens: 4096, // headroom for tools that emit file contents (e.g. github_commit_file)
           system: SYSTEM_PROMPT,
           tools: TOOLS,
           messages
@@ -82,9 +86,20 @@ Always confirm destructive or send actions. For task creation, just do it and co
 
 Respond in plain text. Use markdown only for lists. Keep responses under 150 words unless Ian asks for detail.`;
 
+// Guidance for the action tools — appended to whichever persona prompt is active.
+const TOOL_GUIDANCE = `
+
+You also have action tools for UnitedSets (tournaments/match play in Supabase), GitHub (read files, commit to a branch, open PRs, check CI, list issues), Vercel (deploy status, build logs, trigger deploy), and the web (fetch a URL, search).
+
+IMPORTANT — approval flow: write actions (updating/creating tournaments, adding match-play players, committing code, opening PRs, triggering deploys) do NOT execute immediately. The tool returns pending_approval: true with a summary. When that happens, relay the summary and ask for a "yes" to confirm. Never claim the action is done until it has actually executed. Read actions (listing, fetching, statuses, logs, search) run immediately.
+
+GitHub safety: commits always go to a feature branch, never main. To ship a change: commit to a branch, open a PR, and share the PR link.
+
+When asked to update the website for tournaments or match play, use the UnitedSets tools (the site reads from that database). Look up the tournament with list_tournaments first if you need its id.`;
+
 // Per-deployment override. Set AGENT_SYSTEM_PROMPT to run a bot for someone
 // else (e.g. a partner) without touching code. Falls back to the default above.
-const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
+const SYSTEM_PROMPT = (process.env.AGENT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT) + TOOL_GUIDANCE;
 
 const TOOLS = [
   {
@@ -193,11 +208,273 @@ const TOOLS = [
       },
       required: ["message", "remind_at"]
     }
+  },
+
+  // ── UnitedSets (unitedsets.com — Supabase) ────────────────────────────
+  {
+    name: "list_tournaments",
+    description: "List tournaments and match-play events on unitedsets.com. Call this first when the user mentions an event by name, to find its id.",
+    input_schema: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "Filter by status, e.g. upcoming, open, in_progress, completed" },
+        type: { type: "string", description: "Filter by type: tournament or match_play" },
+        limit: { type: "number", default: 10 }
+      }
+    }
+  },
+  {
+    name: "update_tournament",
+    description: "Update a tournament or match-play event on unitedsets.com (dates, status, location, fee, featured, etc). Requires approval before it executes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tournament_id: { type: "number" },
+        fields: {
+          type: "object",
+          description: "Only the fields to change. Allowed: name, description, start_date, end_date, registration_deadline, location, address, entry_fee, max_participants, status, featured, format, surface, type, rules, contact_email, contact_phone, image_url, usta_registration_url, use_external_registration"
+        }
+      },
+      required: ["tournament_id", "fields"]
+    }
+  },
+  {
+    name: "create_tournament",
+    description: "Create a new tournament or match-play event on unitedsets.com. Ask for at least name + start_date; sensible defaults fill the rest. Requires approval before it executes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        type: { type: "string", enum: ["tournament", "match_play"], default: "tournament" },
+        start_date: { type: "string", description: "YYYY-MM-DD" },
+        end_date: { type: "string", description: "YYYY-MM-DD, defaults to start_date" },
+        registration_deadline: { type: "string", description: "YYYY-MM-DD" },
+        location: { type: "string" },
+        address: { type: "string" },
+        entry_fee: { type: "number" },
+        max_participants: { type: "number" },
+        description: { type: "string" },
+        format: { type: "string", description: "e.g. single_elimination, round_robin" },
+        surface: { type: "string", description: "e.g. hard, clay, grass" },
+        featured: { type: "boolean" }
+      },
+      required: ["name", "start_date"]
+    }
+  },
+  {
+    name: "add_match_play_player",
+    description: "Add a player to a match-play event on unitedsets.com. Requires approval before it executes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tournament_id: { type: "number", description: "The match-play event's id from list_tournaments" },
+        player_name: { type: "string" },
+        utr_rating: { type: "number" },
+        wtn_rating: { type: "number" }
+      },
+      required: ["tournament_id", "player_name"]
+    }
+  },
+
+  // ── GitHub ────────────────────────────────────────────────────────────
+  {
+    name: "github_get_file",
+    description: "Read a file (or list a directory) from one of Ian's GitHub repos.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "Repo name only, e.g. ians-support-bot" },
+        path: { type: "string", description: "File or directory path, e.g. src/index.js or src" },
+        ref: { type: "string", description: "Branch or commit, defaults to the default branch" }
+      },
+      required: ["repo", "path"]
+    }
+  },
+  {
+    name: "github_commit_file",
+    description: "Create or update ONE file in a repo, committing to a feature branch (never main). Requires approval before it executes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string" },
+        branch: { type: "string", description: "Feature branch name, e.g. bot/update-homepage. Created from the default branch if it doesn't exist." },
+        path: { type: "string" },
+        content: { type: "string", description: "FULL new file content (not a diff)" },
+        message: { type: "string", description: "Commit message" }
+      },
+      required: ["repo", "branch", "path", "content", "message"]
+    }
+  },
+  {
+    name: "github_open_pr",
+    description: "Open a pull request from a feature branch to the default branch. Requires approval before it executes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string" },
+        branch: { type: "string", description: "The feature branch with the changes" },
+        title: { type: "string" },
+        body: { type: "string" }
+      },
+      required: ["repo", "branch", "title"]
+    }
+  },
+  {
+    name: "github_check_ci",
+    description: "Check CI/check-run status for a branch or commit in a repo.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string" },
+        ref: { type: "string", description: "Branch or commit, defaults to the default branch" }
+      },
+      required: ["repo"]
+    }
+  },
+  {
+    name: "github_list_issues",
+    description: "List open issues in one of Ian's repos.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string" },
+        state: { type: "string", enum: ["open", "closed", "all"], default: "open" }
+      },
+      required: ["repo"]
+    }
+  },
+
+  // ── Vercel ────────────────────────────────────────────────────────────
+  {
+    name: "vercel_deploy_status",
+    description: "Get the latest Vercel deployments and their states (READY/ERROR/BUILDING). Optionally filter by project name.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Vercel project name, optional" }
+      }
+    }
+  },
+  {
+    name: "vercel_build_logs",
+    description: "Get the tail of the build log for a specific deployment (use vercel_deploy_status first to get the deployment id).",
+    input_schema: {
+      type: "object",
+      properties: {
+        deployment_id: { type: "string" }
+      },
+      required: ["deployment_id"]
+    }
+  },
+  {
+    name: "vercel_trigger_deploy",
+    description: "Trigger a fresh deploy of the main site via its deploy hook. Requires approval before it executes.",
+    input_schema: { type: "object", properties: {} }
+  },
+
+  // ── Web ───────────────────────────────────────────────────────────────
+  {
+    name: "web_fetch",
+    description: "Fetch a URL and return its readable text (e.g. to check a live page or read an article).",
+    input_schema: {
+      type: "object",
+      properties: { url: { type: "string" } },
+      required: ["url"]
+    }
+  },
+  {
+    name: "web_search",
+    description: "Search the web and return the top results.",
+    input_schema: {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"]
+    }
   }
 ];
 
+// ── Action tools: executors + approval gate ─────────────────────────────
+// Write actions are proposed, summarized in Telegram, and only executed after
+// an explicit "yes" (same pattern as email drafts). Reads run immediately.
+
+const ACTION_EXECUTORS = {
+  // UnitedSets
+  list_tournaments: (i) => unitedsets.listTournaments(i),
+  update_tournament: (i) => unitedsets.updateTournament(i.tournament_id, i.fields),
+  create_tournament: (i) => unitedsets.createTournament(i),
+  add_match_play_player: (i) => unitedsets.addMatchPlayPlayer(i),
+  // GitHub
+  github_get_file: (i) => github.getFile(i),
+  github_commit_file: (i) => github.commitFile(i),
+  github_open_pr: (i) => github.openPullRequest(i),
+  github_check_ci: (i) => github.checkCI(i),
+  github_list_issues: (i) => github.listIssues(i),
+  // Vercel
+  vercel_deploy_status: (i) => vercel.deployStatus(i),
+  vercel_build_logs: (i) => vercel.buildLogs(i),
+  vercel_trigger_deploy: () => vercel.triggerDeploy(),
+  // Web
+  web_fetch: (i) => web.webFetch(i),
+  web_search: (i) => web.webSearch(i)
+};
+
+const APPROVAL_REQUIRED = new Set([
+  "update_tournament",
+  "create_tournament",
+  "add_match_play_player",
+  "github_commit_file",
+  "github_open_pr",
+  "vercel_trigger_deploy"
+]);
+
+function summarizeAction(toolName, input) {
+  switch (toolName) {
+    case "update_tournament":
+      return `Update tournament #${input.tournament_id} on unitedsets.com: ${JSON.stringify(input.fields)}`;
+    case "create_tournament":
+      return `Create ${input.type || "tournament"} "${input.name}" on unitedsets.com starting ${input.start_date}`;
+    case "add_match_play_player":
+      return `Add player "${input.player_name}" to match-play event #${input.tournament_id}`;
+    case "github_commit_file":
+      return `Commit to ${input.repo} (branch ${input.branch}): ${input.path} — "${input.message}"`;
+    case "github_open_pr":
+      return `Open PR in ${input.repo} from branch ${input.branch}: "${input.title}"`;
+    case "vercel_trigger_deploy":
+      return `Trigger a fresh Vercel deploy of the site`;
+    default:
+      return `${toolName}: ${JSON.stringify(input).slice(0, 200)}`;
+  }
+}
+
+async function executePendingAction(action) {
+  const executor = ACTION_EXECUTORS[action.tool_name];
+  if (!executor) throw new Error(`Unknown pending action tool: ${action.tool_name}`);
+  return executor(action.payload);
+}
+
 async function executeTool(toolName, toolInput, userId, chatId) {
   console.log(`Executing tool: ${toolName}`, toolInput);
+
+  // Action tools (UnitedSets / GitHub / Vercel / Web)
+  if (ACTION_EXECUTORS[toolName]) {
+    if (APPROVAL_REQUIRED.has(toolName)) {
+      const summary = summarizeAction(toolName, toolInput);
+      const id = db.savePendingAction({
+        user_id: userId,
+        chat_id: chatId.toString(),
+        tool_name: toolName,
+        payload: toolInput,
+        summary
+      });
+      return {
+        pending_approval: true,
+        action_id: id,
+        summary,
+        instructions: "Not executed yet. Relay this summary and ask for a 'yes' to confirm."
+      };
+    }
+    return ACTION_EXECUTORS[toolName](toolInput);
+  }
 
   switch (toolName) {
     case "create_calendar_event": {
@@ -299,6 +576,33 @@ export async function handleTelegramUpdate(update) {
   addToHistory(userId, "user", `[${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}] ${text}`);
 
   const history = getHistory(userId);
+
+  // Check for approval/rejection of a pending action (site update, commit, deploy)
+  const isApproval = /^(yes|approved?|go ahead|confirm|do it|send it|send)$/i.test(text.trim());
+  const isRejection = /^(no|nope|cancel|reject|don'?t|stop)$/i.test(text.trim());
+  if (isApproval || isRejection) {
+    const action = db.getPendingAction(userId);
+    if (action) {
+      if (isRejection) {
+        db.resolvePendingAction(action.id, "rejected");
+        await sendMessage(chatId, `🚫 Cancelled: ${action.summary}`);
+        addToHistory(userId, "assistant", `Cancelled pending action: ${action.summary}`);
+        return;
+      }
+      await sendMessage(chatId, null, "typing");
+      try {
+        const result = await executePendingAction(action);
+        db.resolvePendingAction(action.id, "executed");
+        await sendMarkdown(chatId, `✅ Done: ${action.summary}\n\`${JSON.stringify(result).slice(0, 300)}\``);
+        addToHistory(userId, "assistant", `Executed: ${action.summary}. Result: ${JSON.stringify(result).slice(0, 300)}`);
+      } catch (err) {
+        db.resolvePendingAction(action.id, "failed");
+        await sendMessage(chatId, `❌ Failed: ${action.summary}\n${err.message}`);
+        addToHistory(userId, "assistant", `Failed to execute: ${action.summary}. Error: ${err.message}`);
+      }
+      return;
+    }
+  }
 
   // Check for approval of pending draft
   if (/^(yes|send it|send|approved?|go ahead|confirm)$/i.test(text.trim())) {

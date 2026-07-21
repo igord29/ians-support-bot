@@ -66,6 +66,18 @@ sqlite.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_conv_user_time
     ON conversation_history (user_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS pending_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT,
+    chat_id TEXT,
+    tool_name TEXT,
+    payload TEXT,
+    summary TEXT,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now')),
+    resolved_at TEXT
+  );
 `);
 
 export const db = {
@@ -171,5 +183,32 @@ export const db = {
       ORDER BY id DESC LIMIT ?
     `).all(userId, `-${ttlHours} hours`, limitTurns);
     return rows.reverse();
+  },
+
+  // Pending actions — proposed writes (site updates, commits, deploys) that
+  // wait for an explicit "yes" in Telegram before executing.
+  savePendingAction({ user_id, chat_id, tool_name, payload, summary }) {
+    const result = sqlite.prepare(`
+      INSERT INTO pending_actions (user_id, chat_id, tool_name, payload, summary)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(user_id, chat_id, tool_name, JSON.stringify(payload), summary);
+    return result.lastInsertRowid;
+  },
+
+  // Newest unresolved action within the last hour (stale proposals expire)
+  getPendingAction(userId) {
+    const row = sqlite.prepare(`
+      SELECT * FROM pending_actions
+      WHERE user_id = ? AND status = 'pending' AND created_at >= datetime('now', '-1 hour')
+      ORDER BY id DESC LIMIT 1
+    `).get(userId);
+    if (!row) return null;
+    return { ...row, payload: JSON.parse(row.payload) };
+  },
+
+  resolvePendingAction(id, status) {
+    sqlite.prepare(`
+      UPDATE pending_actions SET status = ?, resolved_at = datetime('now') WHERE id = ?
+    `).run(status, id);
   }
 };
