@@ -3,6 +3,7 @@ import { sendMessage, sendMarkdown, transcribeVoice } from "./telegram.js";
 import { db } from "./db.js";
 import { MODEL } from "./config.js";
 import { runDiagnostics, formatResults } from "./diagnostics.js";
+import { readMemory, rememberFact } from "./memory.js";
 import { createCalendarEvent, listTodayEvents } from "./google-calendar.js";
 import { draftEmail, sendEmail } from "./gmail.js";
 import { addGoogleTask, listPendingTasks, completeTask } from "./google-tasks.js";
@@ -16,6 +17,14 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const API_TIMEOUT_MS = 30_000; // 30 seconds — if Claude hasn't responded, abort
 const MAX_RETRIES = 2;
 
+// Fold the persisted long-term memory into the system prompt each turn.
+function buildSystemPrompt() {
+  const memory = readMemory();
+  return memory
+    ? `${SYSTEM_PROMPT}\n\n# Long-term memory (durable notes about Ian — use when relevant)\n${memory}`
+    : SYSTEM_PROMPT;
+}
+
 async function callClaude(messages, { retries = MAX_RETRIES } = {}) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -23,7 +32,7 @@ async function callClaude(messages, { retries = MAX_RETRIES } = {}) {
         {
           model: MODEL,
           max_tokens: 4096, // headroom for tools that emit file contents (e.g. github_commit_file)
-          system: SYSTEM_PROMPT,
+          system: buildSystemPrompt(),
           tools: TOOLS,
           messages
         },
@@ -390,6 +399,15 @@ const TOOLS = [
       properties: { query: { type: "string" } },
       required: ["query"]
     }
+  },
+  {
+    name: "remember",
+    description: "Save a durable fact or preference to long-term memory so you recall it in future conversations (persists across restarts). Use when Ian shares a lasting preference, a recurring detail, or says 'remember ...'. Keep each note concise.",
+    input_schema: {
+      type: "object",
+      properties: { note: { type: "string", description: "The fact to remember, phrased concisely" } },
+      required: ["note"]
+    }
   }
 ];
 
@@ -513,6 +531,10 @@ async function executeTool(toolName, toolInput, userId, chatId) {
       await db.saveIdea({ ...toolInput, user_id: userId, timestamp: new Date().toISOString() });
       return { success: true };
     }
+    case "remember": {
+      rememberFact(toolInput.note);
+      return { success: true, remembered: toolInput.note };
+    }
     case "set_reminder": {
       const remindAt = new Date(toolInput.remind_at).toISOString();
       const id = db.saveReminder({
@@ -556,6 +578,15 @@ export async function handleTelegramUpdate(update) {
   const allowedUsers = process.env.ALLOWED_TELEGRAM_USER_IDS?.split(",") || [];
   if (allowedUsers.length > 0 && !allowedUsers.includes(userId)) {
     await sendMessage(chatId, "Sorry, I don't recognize you.");
+    return;
+  }
+
+  // Show the bot's long-term memory
+  if (/^\/memory\b/i.test(text.trim())) {
+    const mem = readMemory();
+    await sendMarkdown(chatId, mem
+      ? `🧠 *Long-term memory:*\n${mem}`
+      : `🧠 Memory is empty. Say things like "remember that I prefer morning meetings" and I'll keep them.`);
     return;
   }
 
