@@ -12,7 +12,8 @@ import { db } from "./db.js";
 // Map a USTA tournament object to create_tournament input (unitedsets schema).
 export function mapUstaTournament(t) {
   const loc = t.primaryLocation || {};
-  const fee = t.events?.[0]?.pricing?.entryFee?.amount;
+  // USTA returns the entry fee in cents (e.g. 8000); unitedsets stores dollars (80.00)
+  const feeCents = t.events?.[0]?.pricing?.entryFee?.amount;
   return {
     name: t.name,
     start_date: t.timings?.startDate,
@@ -20,7 +21,7 @@ export function mapUstaTournament(t) {
     registration_deadline: t.registrationRestrictions?.entriesCloseDate || t.timings?.startDate,
     location: loc.name || loc.town || "TBD",
     address: [loc.address1, loc.town, loc.postcode].filter(Boolean).join(", ") || "TBD",
-    entry_fee: typeof fee === "number" ? fee : 0,
+    entry_fee: typeof feeCents === "number" ? feeCents / 100 : 0,
     type: "tournament",
     usta_registration_url: "https://playtennis.usta.com/Competitions/5dmedia/Tournaments/",
     description: `Imported from USTA (tournament ${t.id}).`
