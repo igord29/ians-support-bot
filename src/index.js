@@ -3,6 +3,7 @@ import express from "express";
 import { handleTelegramUpdate } from "./bot.js";
 import { runDailyDigest, runMorningBriefing } from "./scheduler.js";
 import { checkUstaEmails } from "./usta-watch.js";
+import { handleUstaWebhook } from "./usta-webhook.js";
 import { db } from "./db.js";
 import { sendMessage, setWebhook } from "./telegram.js";
 import cron from "node-cron";
@@ -37,6 +38,24 @@ app.post("/webhook", async (req, res) => {
         body: JSON.stringify({ chat_id: chatId, text: `⚠️ Error: ${err.message?.slice(0, 200)}` })
       }).catch(() => {});
     }
+  }
+});
+
+// USTA tournaments feed — posted by the Make.com scenario. Secret-gated.
+app.post("/usta-webhook", async (req, res) => {
+  const secret = process.env.USTA_HOOK_SECRET;
+  if (!secret || req.get("x-usta-secret") !== secret) return res.sendStatus(403);
+  res.sendStatus(200); // ack immediately
+  try {
+    // Accept either a plain {items:[...]} array or USTA's raw GraphQL response
+    const items = req.body?.items
+      || req.body?.tournaments
+      || req.body?.data?.paginatedPublishedTournaments?.items
+      || [];
+    const result = await handleUstaWebhook(items);
+    console.log("[usta-webhook]", JSON.stringify(result));
+  } catch (err) {
+    console.error("usta-webhook error:", err.message);
   }
 });
 

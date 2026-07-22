@@ -58,7 +58,43 @@ For search: free API key at brave.com/search/api → `BRAVE_API_KEY`.
 
 Try: *"check what the live unitedsets homepage says about the next tournament"*.
 
-## 5. USTA tournament watcher
+## 5. USTA → UnitedSets auto-import (Make.com) ⭐ primary
+
+Automatically surfaces newly-published USTA tournaments (for **both** your org
+sections) and offers to add them to unitedsets.com — you just reply "yes."
+
+**How it works.** USTA's site is Cloudflare-protected, so the bot can't poll it.
+A **Make.com scenario** (already created in your account: *"USTA → UnitedSets
+bot (tournament watcher)"*) calls USTA's public GraphQL API once a day, for both
+org IDs, and POSTs the results to the bot's `/usta-webhook`. The bot dedupes by
+tournament id and, for anything new, stages an approval-gated `create_tournament`
+and pings you on Telegram.
+
+- **Endpoint** (public, no auth): `POST https://prd-usta-kube-tournaments.clubspark.pro/`
+- **Org IDs watched:** `467ea6c1-b0f5-4a97-85b2-1f0ac196cbbb` and `88d20618-3292-40a0-9539-94baa993fed4`
+
+### Setup
+
+1. On Railway set **`USTA_HOOK_SECRET`** to exactly: `5dmedia-usta-7Kq2Zpv9x`
+   (this matches the `x-usta-secret` header the Make scenario already sends; change
+   both together if you want a different value).
+2. Deploy the bot (merge to `main`) so the `/usta-webhook` route exists.
+3. The Make scenario is already **active** and runs daily at 8:00 AM. To test now,
+   open it in Make and click **Run once**.
+
+> **First run note:** the first successful run treats *all current* tournaments as
+> new, so you may get several Telegram prompts at once — approve the real ones,
+> ignore the rest. After that, only genuinely new tournaments are surfaced.
+> If multiple are staged, reply "yes" once per tournament (each "yes" confirms the
+> most recent prompt).
+
+### If you change org sections
+
+Edit the scenario's two HTTP modules (module 1 and 3) and swap the
+`organisationId` in the request body. To watch more sections, duplicate the
+fetch+forward module pair.
+
+## 6. USTA tournament watcher (email fallback)
 
 Notifies you on Telegram when the USTA tournaments page changes (or when USTA
 emails you directly), and lets you reply "add it to the site" to create the

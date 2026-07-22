@@ -73,6 +73,12 @@ sqlite.exec(`
     seen_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS seen_usta_tournaments (
+    usta_id TEXT PRIMARY KEY,
+    name TEXT,
+    seen_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT,
@@ -225,5 +231,14 @@ export const db = {
 
   markEmailSeen(id, subject) {
     sqlite.prepare(`INSERT OR IGNORE INTO seen_emails (id, subject) VALUES (?, ?)`).run(id, subject);
+  },
+
+  // USTA tournament dedupe — so a new tournament is announced only once
+  hasSeenUstaTournament(id) {
+    return !!sqlite.prepare(`SELECT 1 FROM seen_usta_tournaments WHERE usta_id = ?`).get(String(id));
+  },
+
+  markUstaTournamentSeen(id, name) {
+    sqlite.prepare(`INSERT OR IGNORE INTO seen_usta_tournaments (usta_id, name) VALUES (?, ?)`).run(String(id), name);
   }
 };
