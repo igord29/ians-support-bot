@@ -3,7 +3,7 @@ import { sendMessage, sendMarkdown, transcribeVoice } from "./telegram.js";
 import { db } from "./db.js";
 import { MODEL } from "./config.js";
 import { runDiagnostics, formatResults } from "./diagnostics.js";
-import { readMemory, rememberFact } from "./memory.js";
+import { getMemory, refreshMemory, rememberFact } from "./memory.js";
 import { createCalendarEvent, listTodayEvents } from "./google-calendar.js";
 import { draftEmail, sendEmail } from "./gmail.js";
 import { addGoogleTask, listPendingTasks, completeTask } from "./google-tasks.js";
@@ -19,7 +19,7 @@ const MAX_RETRIES = 2;
 
 // Fold the persisted long-term memory into the system prompt each turn.
 function buildSystemPrompt() {
-  const memory = readMemory();
+  const memory = getMemory();
   return memory
     ? `${SYSTEM_PROMPT}\n\n# Long-term memory (durable notes about Ian — use when relevant)\n${memory}`
     : SYSTEM_PROMPT;
@@ -532,7 +532,7 @@ async function executeTool(toolName, toolInput, userId, chatId) {
       return { success: true };
     }
     case "remember": {
-      rememberFact(toolInput.note);
+      await rememberFact(toolInput.note);
       return { success: true, remembered: toolInput.note };
     }
     case "set_reminder": {
@@ -581,9 +581,12 @@ export async function handleTelegramUpdate(update) {
     return;
   }
 
+  // Load the latest long-term memory into cache for this turn (system prompt + /memory)
+  await refreshMemory();
+
   // Show the bot's long-term memory
   if (/^\/memory\b/i.test(text.trim())) {
-    const mem = readMemory();
+    const mem = getMemory();
     await sendMarkdown(chatId, mem
       ? `🧠 *Long-term memory:*\n${mem}`
       : `🧠 Memory is empty. Say things like "remember that I prefer morning meetings" and I'll keep them.`);
