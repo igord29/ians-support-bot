@@ -57,6 +57,12 @@ export async function setWebhook(url) {
   return call("setWebhook", { url });
 }
 
+// Resolve a Telegram file_id to a downloadable https URL (valid ~1 hour).
+export async function getFileUrl(fileId) {
+  const info = await call("getFile", { file_id: fileId });
+  return `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${info.result.file_path}`;
+}
+
 export async function transcribeVoice(fileId) {
   // 1. Get file path from Telegram
   const fileInfo = await call("getFile", { file_id: fileId });

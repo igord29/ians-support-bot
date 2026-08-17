@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { sendMessage, sendMarkdown, transcribeVoice } from "./telegram.js";
+import { sendMessage, sendMarkdown, transcribeVoice, getFileUrl } from "./telegram.js";
 import { db } from "./db.js";
 import { MODEL } from "./config.js";
 import { runDiagnostics, formatResults } from "./diagnostics.js";
@@ -8,6 +8,7 @@ import { createCalendarEvent, listTodayEvents } from "./google-calendar.js";
 import { draftEmail, sendEmail } from "./gmail.js";
 import { addGoogleTask, listPendingTasks, completeTask } from "./google-tasks.js";
 import * as unitedsets from "./unitedsets.js";
+import * as champions from "./champions.js";
 import * as github from "./github.js";
 import * as vercel from "./vercel.js";
 import * as web from "./web.js";
@@ -104,7 +105,9 @@ IMPORTANT — approval flow: write actions (updating/creating tournaments, addin
 
 GitHub safety: commits always go to a feature branch, never main. To ship a change: commit to a branch, open a PR, and share the PR link.
 
-When asked to update the website for tournaments or match play, use the UnitedSets tools (the site reads from that database). Look up the tournament with list_tournaments first if you need its id.`;
+When asked to update the website for tournaments or match play, use the UnitedSets tools (the site reads from that database). Look up the tournament with list_tournaments first if you need its id.
+
+Hall of Champions: when Ian sends a player photo it is hosted automatically and its URL appears in the conversation. Once he gives the champion's details, call stage_champion with that photo_url. Ask for anything missing (name, venue, level, age group, category, dates). Only include a flight for higher-tier tournaments — general tournaments have no flight. Staging queues the champion for its branded Canva card; make clear it is not on the website yet.`;
 
 // Per-deployment override. Set AGENT_SYSTEM_PROMPT to run a bot for someone
 // else (e.g. a partner) without touching code. Falls back to the default above.
@@ -408,6 +411,32 @@ const TOOLS = [
       properties: { note: { type: "string", description: "The fact to remember, phrased concisely" } },
       required: ["note"]
     }
+  },
+
+  // ── Hall of Champions ─────────────────────────────────────────────────
+  {
+    name: "stage_champion",
+    description: "Stage a new Hall of Champions entry once the player photo has been uploaded. Use the photo_url from the most recently uploaded photo in this conversation. This queues the champion for its branded Canva card — it does NOT publish to unitedsets.com yet.",
+    input_schema: {
+      type: "object",
+      properties: {
+        photo_url: { type: "string", description: "Public URL of the uploaded player photo" },
+        name: { type: "string", description: "Player full name" },
+        venue: { type: "string", description: "e.g. Chelsea Piers, VIP Country Club, Mamaroneck Beach & Yacht Club" },
+        event_dates: { type: "string", description: "e.g. June 13-14, 2026" },
+        level: { type: "string", description: "L5 or L6" },
+        age_group: { type: "string", description: "U10, U12, U14, U16 or U18" },
+        category: { type: "string", description: "Boys, Girls, or sportsmanship" },
+        flight: { type: "string", description: "Only for higher-tier tournaments, e.g. 'Flight 2'. Omit entirely for general tournaments." },
+        notes: { type: "string" }
+      },
+      required: ["photo_url", "name"]
+    }
+  },
+  {
+    name: "list_pending_champions",
+    description: "List champions that have been staged and are still awaiting their branded card.",
+    input_schema: { type: "object", properties: {} }
   }
 ];
 
@@ -433,7 +462,10 @@ const ACTION_EXECUTORS = {
   vercel_trigger_deploy: () => vercel.triggerDeploy(),
   // Web
   web_fetch: (i) => web.webFetch(i),
-  web_search: (i) => web.webSearch(i)
+  web_search: (i) => web.webSearch(i),
+  // Hall of Champions
+  stage_champion: (i) => champions.stageChampion(i),
+  list_pending_champions: () => champions.listPendingChampions()
 };
 
 const APPROVAL_REQUIRED = new Set([
@@ -558,6 +590,45 @@ export async function handleTelegramUpdate(update) {
   const chatId = msg.chat.id;
   let text = msg.text;
 
+  // Authorize before doing any work (uploads, transcription, model calls)
+  const allowedUsers = process.env.ALLOWED_TELEGRAM_USER_IDS?.split(",").map(s => s.trim()).filter(Boolean) || [];
+  if (allowedUsers.length > 0 && !allowedUsers.includes(userId)) {
+    await sendMessage(chatId, "Sorry, I don't recognize you.");
+    return;
+  }
+
+  // Handle photos — host them publicly so Canva can pull them into a champion card
+  if (msg.photo?.length) {
+    await sendMessage(chatId, null, "typing");
+    try {
+      const largest = msg.photo[msg.photo.length - 1]; // Telegram lists sizes smallest → largest
+      const fileUrl = await getFileUrl(largest.file_id);
+      const publicUrl = await champions.uploadImage({
+        source_url: fileUrl,
+        folder: "photos",
+        filename: `photo-${Date.now()}.jpg`
+      });
+      console.log("Player photo hosted:", publicUrl);
+      addToHistory(
+        userId,
+        "assistant",
+        `A player photo was uploaded and is hosted at ${publicUrl} — pass this as photo_url when calling stage_champion.`
+      );
+      text = msg.caption || null;
+      if (!text) {
+        await sendMessage(
+          chatId,
+          "📸 Photo saved. Who's the champion?\nSend: name, venue, level, age group, category and dates (include the flight only for higher-tier events)."
+        );
+        return;
+      }
+    } catch (err) {
+      console.error("Photo upload error:", err);
+      await sendMessage(chatId, `Couldn't save that photo: ${err.message}`);
+      return;
+    }
+  }
+
   // Handle voice messages — transcribe to text
   if (!text && msg.voice) {
     await sendMessage(chatId, null, "typing");
@@ -573,13 +644,6 @@ export async function handleTelegramUpdate(update) {
   }
 
   if (!text) return;
-
-  // Don't process messages from unknown users
-  const allowedUsers = process.env.ALLOWED_TELEGRAM_USER_IDS?.split(",") || [];
-  if (allowedUsers.length > 0 && !allowedUsers.includes(userId)) {
-    await sendMessage(chatId, "Sorry, I don't recognize you.");
-    return;
-  }
 
   // Load the latest long-term memory into cache for this turn (system prompt + /memory)
   await refreshMemory();

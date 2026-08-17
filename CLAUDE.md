@@ -171,12 +171,30 @@ the page: `https://www.unitedsets.com/tournaments/hall-of-champions.html`
 
 ---
 
+## Photo intake via Telegram (built)
+
+Text the bot a player photo and it hosts it automatically, then stages the
+champion — no manual URL wrangling:
+
+1. Send the photo (a caption with the details works, or the bot will ask).
+2. The bot uploads it to `champions/photos/…` and gets a public URL.
+3. Give it the details; it calls `stage_champion`, writing a row to
+   `public.pending_champions` (`status = 'awaiting_card'`).
+4. Later, run the Canva steps above for each pending row, insert into
+   `champions`, then set that row's `status = 'published'` and `champion_id`.
+
+Ask the bot "any pending champions?" (`list_pending_champions`) to see the queue.
+Requires `CHAMPION_UPLOAD_SECRET` on the bot, matching the edge function.
+
 ## Open gaps (need a human)
 
 1. **Flight-free Mamaroneck template** — flight art is baked into pages 19–22.
    Someone must create a no-flight page in the Canva editor for general
    tournaments.
-2. **Photo delivery** — photos must arrive as a public URL.
+2. **Canva render step** — Canva editing is only reachable through the Canva MCP
+   (an assistant session), not from the bot. The bot queues champions; the card
+   is still produced in a session. Automating it end-to-end would need the Canva
+   Connect API (OAuth app + brand-template autofill).
 3. **Social posting** — not built here. The Make scenario
    *"UnitedSets Tennis 2 Social Media"* already has live Instagram Business,
    Facebook Pages, Buffer, and OpenAI connections to hook into.
